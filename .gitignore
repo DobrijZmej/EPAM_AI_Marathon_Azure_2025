@@ -1,1 +1,19 @@
+# Terraform state
+*.tfstate
+*.tfstate.*
+crash.log
+.terraform/
+.terraform.lock.hcl
+
+# Local .tfvars files (can contain secrets)
+*.tfvars
+
+# VS Code settings (optional)
+.vscode/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+azure-neuromodels-project/terraform/terraform.exe
 azure-neuromodels-project/deploy.ps1
