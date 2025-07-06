@@ -4,11 +4,10 @@ resource "azurerm_storage_account" "this" {
   location                 = var.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
-  allow_blob_public_access = false
 }
 
 resource "azurerm_storage_container" "knowledge" {
   name                  = "knowledge-base"
-  storage_account_name  = azurerm_storage_account.this.name
+  storage_account_id    = azurerm_storage_account.this.id
   container_access_type = "private"
 }
