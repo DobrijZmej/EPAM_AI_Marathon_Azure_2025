@@ -82,11 +82,17 @@ async def analyze_and_update_sentiment(max_items=100):
                     batch_items = items[i:i+batch_size]
                     logger.info(f"[Sentiment] Sending batch: {[d['id'] for d in batch_docs]}")
                     try:
-                        response = await ta_client.analyze_sentiment(documents=batch_docs)
+                        sentiment_response = await ta_client.analyze_sentiment(documents=batch_docs)
                     except Exception as e:
                         logger.error(f"[Sentiment] Exception in batch: {e}\n{traceback.format_exc()}")
                         continue
-                    for doc_result, item in zip(response, batch_items):
+                    # Key Phrases extraction
+                    try:
+                        keyphrases_response = await ta_client.extract_key_phrases(documents=batch_docs)
+                    except Exception as e:
+                        logger.error(f"[KeyPhrases] Exception in batch: {e}\n{traceback.format_exc()}")
+                        keyphrases_response = [None] * len(batch_docs)
+                    for doc_result, kp_result, item in zip(sentiment_response, keyphrases_response, batch_items):
                         logger.info(f"[Sentiment] Processing item id={item['id']}")
                         logger.info(f"[Sentiment] Raw item: {item}")
                         # Ensure meta exists and is a dict
@@ -103,14 +109,21 @@ async def analyze_and_update_sentiment(max_items=100):
                                 "neutral": scores.neutral,
                                 "negative": scores.negative
                             }
-                            try:
-                                result = await container.replace_item(item=item["id"], body=item)
-                                logger.info(f"[CosmosDB] Updated item id={item['id']}, result: {result}")
-                                processed_count += 1
-                            except Exception as e:
-                                logger.error(f"[CosmosDB] Failed to update item {item['id']}: {e}\n{traceback.format_exc()}")
                         else:
                             logger.error(f"[TextAnalytics] Error for item {item['id']}: {doc_result.error}")
+                        # Add key phrases
+                        if kp_result and not kp_result.is_error:
+                            item["meta"]["key_phrases"] = kp_result.key_phrases
+                            logger.info(f"[KeyPhrases] id={item['id']} key_phrases={kp_result.key_phrases}")
+                        elif kp_result:
+                            logger.error(f"[KeyPhrases] Error for item {item['id']}: {kp_result.error}")
+                        # Update CosmosDB
+                        try:
+                            result = await container.replace_item(item=item["id"], body=item)
+                            logger.info(f"[CosmosDB] Updated item id={item['id']}, result: {result}")
+                            processed_count += 1
+                        except Exception as e:
+                            logger.error(f"[CosmosDB] Failed to update item {item['id']}: {e}\n{traceback.format_exc()}")
             logger.info(f"[Sentiment] Processed {processed_count} items.")
             return {"processed": processed_count}
     except Exception as e:
