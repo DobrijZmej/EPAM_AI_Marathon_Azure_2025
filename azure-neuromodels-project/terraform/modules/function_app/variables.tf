@@ -28,3 +28,13 @@ variable "app_settings" {
   type        = map(string)
   default     = {}
 }
+
+variable "log_analytics_workspace_id" {
+  description = "Workspace ID for Log Analytics."
+  type        = string
+}
+
+variable "log_analytics_workspace_shared_key" {
+  description = "Primary shared key for Log Analytics."
+  type        = string
+}

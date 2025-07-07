@@ -1,2 +1,4 @@
 azure-ai-textanalytics
 azure-cosmos
+azure-kusto-data
+azure-kusto-ingest

@@ -36,7 +36,9 @@ resource "azurerm_linux_function_app" "this" {
     }
     cors {
       allowed_origins = [
-        "https://neuromodelswebdemo.z6.web.core.windows.net"
+        "https://neuromodelswebdemo.z6.web.core.windows.net",
+        "https://portal.azure.com",
+        "*"
       ]
       support_credentials = false
     }
@@ -45,5 +47,8 @@ resource "azurerm_linux_function_app" "this" {
     "FUNCTIONS_WORKER_RUNTIME" = "python"
     "WEBSITE_RUN_FROM_PACKAGE" = "1"
     "APPINSIGHTS_INSTRUMENTATIONKEY" = azurerm_application_insights.this.instrumentation_key
+    "LOG_ANALYTICS_WORKSPACE_ID" = var.log_analytics_workspace_id
+    "LOG_ANALYTICS_SHARED_KEY" = var.log_analytics_workspace_shared_key
+    "LOG_ANALYTICS_LOG_TYPE" = "CustomDialogMetrics"
   }, var.app_settings)
 }

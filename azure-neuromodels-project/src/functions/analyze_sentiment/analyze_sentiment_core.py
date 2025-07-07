@@ -1,10 +1,18 @@
 import os
 import logging
+import asyncio
+import traceback
+import requests
+import json
+import base64
+from datetime import datetime
 from azure.cosmos.aio import CosmosClient
 from azure.ai.textanalytics.aio import TextAnalyticsClient
 from azure.core.credentials import AzureKeyCredential
-import asyncio
-import traceback
+from azure.kusto.data import KustoConnectionStringBuilder
+from azure.kusto.data.helpers import dataframe_from_result_table
+from azure.kusto.ingest import QueuedIngestClient, IngestionProperties
+from azure.kusto.ingest.ingestion_properties import DataFormat
 
 # Set up a custom logger with module and function name in format
 logging.basicConfig(
@@ -13,12 +21,54 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 COSMOSDB_ENDPOINT = os.environ.get("COSMOSDB_ENDPOINT")
 COSMOSDB_KEY = os.environ.get("COSMOSDB_KEY")
 COSMOSDB_DATABASE = os.environ.get("COSMOSDB_DATABASE")
 COSMOSDB_CONTAINER = os.environ.get("COSMOSDB_CONTAINER")
 TEXT_ANALYTICS_ENDPOINT = os.environ.get("TEXT_ANALYTICS_ENDPOINT")
 TEXT_ANALYTICS_KEY = os.environ.get("TEXT_ANALYTICS_KEY")
+KUSTO_INGEST_URI = os.environ.get("KUSTO_INGEST_URI")
+KUSTO_DB = os.environ.get("KUSTO_DB")
+KUSTO_TABLE = os.environ.get("KUSTO_TABLE", "DialogMetrics")
+KUSTO_INGEST_CLIENT_ID = os.environ.get("KUSTO_INGEST_CLIENT_ID")
+KUSTO_INGEST_CLIENT_SECRET = os.environ.get("KUSTO_INGEST_CLIENT_SECRET")
+KUSTO_INGEST_TENANT_ID = os.environ.get("KUSTO_INGEST_TENANT_ID")
+
+def build_signature(customer_id, shared_key, date, content_length, method, content_type, resource):
+    x_headers = 'x-ms-date:' + date
+    string_to_hash = f"{method}\n{str(content_length)}\n{content_type}\n{x_headers}\n{resource}"
+    bytes_to_hash = bytes(string_to_hash, encoding="utf-8")
+    decoded_key = base64.b64decode(shared_key)
+    encoded_hash = base64.b64encode(hmac.new(decoded_key, bytes_to_hash, digestmod=hashlib.sha256).digest()).decode()
+    return f"SharedKey {customer_id}:{encoded_hash}"
+
+
+def ingest_data_to_kusto(records):
+    if not (KUSTO_INGEST_URI and KUSTO_DB and KUSTO_TABLE and KUSTO_INGEST_CLIENT_ID and KUSTO_INGEST_CLIENT_SECRET and KUSTO_INGEST_TENANT_ID):
+        logger.error("[Kusto] One or more Kusto env variables are missing!")
+        return False
+    try:
+        kcsb = KustoConnectionStringBuilder.with_aad_application_key_authentication(
+            KUSTO_INGEST_URI, KUSTO_INGEST_CLIENT_ID, KUSTO_INGEST_CLIENT_SECRET, KUSTO_INGEST_TENANT_ID
+        )
+        ingest_client = QueuedIngestClient(kcsb)
+        # Prepare data as NDJSON
+        ndjson = "\n".join(json.dumps(rec, ensure_ascii=False) for rec in records)
+        from io import BytesIO
+        data_stream = BytesIO(ndjson.encode("utf-8"))
+        ingestion_props = IngestionProperties(
+            database=KUSTO_DB,
+            table=KUSTO_TABLE,
+            data_format=DataFormat.JSON,
+            flush_immediately=True
+        )
+        ingest_client.ingest_from_stream(data_stream, ingestion_properties=ingestion_props)
+        logger.info(f"[Kusto] Ingested {len(records)} records to {KUSTO_DB}.{KUSTO_TABLE}")
+        return True
+    except Exception as e:
+        logger.error(f"[Kusto] Ingestion failed: {e}\n{traceback.format_exc()}")
+        return False
 
 async def analyze_and_update_sentiment(max_items=100):
     if not all([COSMOSDB_ENDPOINT, COSMOSDB_KEY, COSMOSDB_DATABASE, COSMOSDB_CONTAINER, TEXT_ANALYTICS_ENDPOINT, TEXT_ANALYTICS_KEY]):
@@ -35,11 +85,9 @@ async def analyze_and_update_sentiment(max_items=100):
             if not items:
                 logger.info("[Sentiment] No items to process.")
                 return {"processed": 0}
-            # Prepare batch for Text Analytics
-            # Step 1: Detect language for items where meta.lang is missing or set to 'uk' (default)
             credential = AzureKeyCredential(TEXT_ANALYTICS_KEY)
+            # Detect language
             async with TextAnalyticsClient(TEXT_ANALYTICS_ENDPOINT, credential) as ta_client:
-                # Detect language in batches
                 batch_size = 10
                 for i in range(0, len(items), batch_size):
                     batch_items = items[i:i+batch_size]
@@ -47,7 +95,6 @@ async def analyze_and_update_sentiment(max_items=100):
                     detect_indices = []
                     for idx, item in enumerate(batch_items):
                         lang = item.get("meta", {}).get("lang")
-                        # Detect if lang is missing or set to 'en' (default)
                         if not lang or lang == "en":
                             detect_docs.append({"id": item["id"], "text": item["content"]})
                             detect_indices.append(idx)
@@ -57,7 +104,6 @@ async def analyze_and_update_sentiment(max_items=100):
                             for res, idx in zip(detect_results, detect_indices):
                                 if not res.is_error:
                                     detected_lang = res.primary_language.iso6391_name
-                                    # Set detected language in meta
                                     if "meta" not in batch_items[idx] or not isinstance(batch_items[idx]["meta"], dict):
                                         batch_items[idx]["meta"] = {}
                                     batch_items[idx]["meta"]["lang"] = detected_lang
@@ -67,15 +113,24 @@ async def analyze_and_update_sentiment(max_items=100):
                         except Exception as e:
                             logger.error(f"[LangDetect] Exception in batch: {e}\n{traceback.format_exc()}")
 
-            # Step 2: Prepare documents for sentiment analysis (now with detected language)
+            # Після аналізу — оновлюємо документи у Cosmos DB, щоб відмітити як оброблені
+            async def update_cosmos_items(container, items):
+                for item in items:
+                    try:
+                        await container.upsert_item(item)
+                        logger.info(f"[Cosmos] Updated item id={item['id']} as processed.")
+                    except Exception as e:
+                        logger.error(f"[Cosmos] Failed to update item id={item['id']}: {e}")
+
+            # Prepare documents for sentiment analysis
             documents = [
                 {"id": item["id"], "text": item["content"], "language": item.get("meta", {}).get("lang", "uk")}
                 for item in items
             ]
             logger.info(f"[Sentiment] Documents to analyze: {[d['id'] for d in documents]}")
             processed_count = 0
+            all_metrics = []
             async with TextAnalyticsClient(TEXT_ANALYTICS_ENDPOINT, credential) as ta_client:
-                # Batch processing: max 10 documents per request
                 batch_size = 10
                 for i in range(0, len(documents), batch_size):
                     batch_docs = documents[i:i+batch_size]
@@ -86,7 +141,6 @@ async def analyze_and_update_sentiment(max_items=100):
                     except Exception as e:
                         logger.error(f"[Sentiment] Exception in batch: {e}\n{traceback.format_exc()}")
                         continue
-                    # Key Phrases extraction
                     try:
                         keyphrases_response = await ta_client.extract_key_phrases(documents=batch_docs)
                     except Exception as e:
@@ -95,35 +149,63 @@ async def analyze_and_update_sentiment(max_items=100):
                     for doc_result, kp_result, item in zip(sentiment_response, keyphrases_response, batch_items):
                         logger.info(f"[Sentiment] Processing item id={item['id']}")
                         logger.info(f"[Sentiment] Raw item: {item}")
-                        # Ensure meta exists and is a dict
-                        if "meta" not in item or not isinstance(item["meta"], dict):
-                            logger.warning(f"[Sentiment] Item id={item['id']} has no 'meta' field or it's not a dict. Creating empty meta.")
-                            item["meta"] = {}
+                        # Формуємо записи для Log Analytics
+                        dialog_id = item.get("dialog_id") or item.get("id")
+                        user_id = item.get("user_id")
+                        message_id = item.get("id")
+                        message_type = item.get("step")
+                        time_generated = item.get("timestamp")
                         if not doc_result.is_error:
                             sentiment = doc_result.sentiment
-                            scores = doc_result.confidence_scores
-                            logger.info(f"[Sentiment] id={item['id']} sentiment={sentiment} scores={{'positive': {scores.positive}, 'neutral': {scores.neutral}, 'negative': {scores.negative}}}")
+                            # Оновлюємо CosmosDB: записуємо результат аналізу
+                            if "meta" not in item or not isinstance(item["meta"], dict):
+                                item["meta"] = {}
                             item["meta"]["sentiment"] = sentiment
-                            item["meta"]["sentiment_score"] = {
-                                "positive": scores.positive,
-                                "neutral": scores.neutral,
-                                "negative": scores.negative
-                            }
-                        else:
-                            logger.error(f"[TextAnalytics] Error for item {item['id']}: {doc_result.error}")
-                        # Add key phrases
+                            if hasattr(doc_result, 'detected_language'):
+                                item["meta"]["lang"] = doc_result.detected_language.iso6391_name
+                            all_metrics.append({
+                                "TimeGenerated": time_generated,
+                                "metric": "sentiment",
+                                "value": sentiment,
+                                "message_id": message_id,
+                                "user_id": user_id,
+                                "dialog_id": dialog_id,
+                                "message_type": message_type
+                            })
+                            all_metrics.append({
+                                "TimeGenerated": time_generated,
+                                "metric": "language",
+                                "value": doc_result.detected_language.iso6391_name if hasattr(doc_result, 'detected_language') else item.get("meta", {}).get("lang", "uk"),
+                                "message_id": message_id,
+                                "user_id": user_id,
+                                "dialog_id": dialog_id,
+                                "message_type": message_type
+                            })
                         if kp_result and not kp_result.is_error:
+                            if "meta" not in item or not isinstance(item["meta"], dict):
+                                item["meta"] = {}
                             item["meta"]["key_phrases"] = kp_result.key_phrases
-                            logger.info(f"[KeyPhrases] id={item['id']} key_phrases={kp_result.key_phrases}")
-                        elif kp_result:
-                            logger.error(f"[KeyPhrases] Error for item {item['id']}: {kp_result.error}")
-                        # Update CosmosDB
-                        try:
-                            result = await container.replace_item(item=item["id"], body=item)
-                            logger.info(f"[CosmosDB] Updated item id={item['id']}, result: {result}")
-                            processed_count += 1
-                        except Exception as e:
-                            logger.error(f"[CosmosDB] Failed to update item {item['id']}: {e}\n{traceback.format_exc()}")
+                            for kw in kp_result.key_phrases:
+                                all_metrics.append({
+                                    "TimeGenerated": time_generated,
+                                    "metric": "keyword",
+                                    "value": kw,
+                                    "message_id": message_id,
+                                    "user_id": user_id,
+                                    "dialog_id": dialog_id,
+                                    "message_type": message_type
+                                })
+                        processed_count += 1
+
+            # Оновлюємо всі оброблені документи у Cosmos DB
+            await update_cosmos_items(container, items)
+            # Надсилаємо всі метрики batch-ом у Kusto (Azure Data Explorer)
+            if all_metrics:
+                logger.info(f"[Kusto] Sending {len(all_metrics)} records to Kusto. Example: {all_metrics[0] if all_metrics else 'EMPTY'}")
+                result = ingest_data_to_kusto(all_metrics)
+                logger.info(f"[Kusto] ingest_data_to_kusto returned: {result}")
+            else:
+                logger.warning("[Kusto] all_metrics is empty, nothing to send.")
             logger.info(f"[Sentiment] Processed {processed_count} items.")
             return {"processed": processed_count}
     except Exception as e:

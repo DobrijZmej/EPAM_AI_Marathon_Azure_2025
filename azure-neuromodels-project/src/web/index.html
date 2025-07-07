@@ -6,11 +6,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     html, body {
-      height: 100%;
+      min-height: 100vh;
       margin: 0;
       font-family: system-ui, Roboto, Arial, sans-serif;
       background: #f4f6fa;
       color: #222;
+    }
+    body {
+      min-height: 100vh;
+      background: #f4f6fa;
     }
     .container {
       min-height: 100vh;
@@ -68,13 +72,43 @@
       word-break: break-word;
       white-space: pre-line;
     }
+    .dashboard {
+      margin-top: 2rem;
+      width: 100%;
+      max-width: 1200px;
+      background: none;
+    }
+    .charts {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 2rem;
+      margin-top: 1.5rem;
+      justify-content: center;
+      align-items: stretch;
+    }
+    .chart-block {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px #0001;
+      padding: 1.5rem;
+      flex: 1 1 320px;
+      min-width: 280px;
+      min-height: 220px;
+      max-width: 400px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+    }
     @media (prefers-color-scheme: dark) {
-      body { background: #181a1b; color: #eee; }
+      html, body { min-height: 100vh; background: #181a1b !important; color: #eee; }
       .container { background: none; }
       form { background: #23272b; box-shadow: 0 2px 12px #0006; }
       input, textarea { background: #23272b; color: #eee; border: 1px solid #444; }
       .answer { background: #263238; color: #b3e5fc; }
       button { background: #2196f3; }
+      .chart-block { background: #23272b; box-shadow: 0 2px 12px #0006; }
     }
   </style>
 </head>
@@ -82,11 +116,35 @@
   <div class="container">
     <h1>AI Агент</h1>
     <form id="ask-form">
-      <textarea id="question" rows="3" placeholder="Введіть ваше запитання..." required></textarea>
+      <input id="question" type="text" placeholder="Введіть ваше запитання..." required autocomplete="off" />
       <button type="submit" id="send-btn">Надіслати</button>
     </form>
     <div class="answer" id="answer"></div>
+    <div class="dashboard">
+      <h2>Аналітика діалогів</h2>
+      <div class="charts">
+        <div class="chart-block">
+          <h3>Sentiment Distribution</h3>
+          <canvas id="sentimentChart"></canvas>
+        </div>
+        <div class="chart-block">
+          <h3>Questions by Language</h3>
+          <canvas id="langChart"></canvas>
+        </div>
+        <div class="chart-block">
+          <h3>Top Key Phrases</h3>
+          <canvas id="phrasesCloud" width="320" height="220"></canvas>
+        </div>
+        <div class="chart-block">
+          <h3>Sentiment Over Time</h3>
+          <canvas id="sentimentTimeChart"></canvas>
+        </div>
+      </div>
+    </div>
   </div>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/wordcloud@1.2.2/src/wordcloud2.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
   <script>
     // Генерація та збереження user_id
     let userId = localStorage.getItem('user_id');
@@ -99,6 +157,14 @@
     const questionInput = document.getElementById('question');
     const answerDiv = document.getElementById('answer');
     const sendBtn = document.getElementById('send-btn');
+
+    // Відправка по Enter
+    questionInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -122,6 +188,138 @@
         sendBtn.disabled = false;
       }
     });
+
+    // === Dashboard logic ===
+    // Замість відносного шляху використовуємо повний URL функції
+    const API_BASE = "https://neuromodels-func.azurewebsites.net/api/analytics-proxy";
+    let sentimentChart, langChart, sentimentTimeChart;
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      await renderSentiment();
+      await renderLanguages();
+      await renderPhrases();
+      await renderSentimentTime();
+    });
+
+    async function renderSentimentTime() {
+      const data = await fetchMetric("sentiment_time");
+      const ctx = document.getElementById("sentimentTimeChart").getContext("2d");
+      if (sentimentTimeChart) sentimentTimeChart.destroy();
+      // Group data by hour and sentiment label
+      // Expected data: [{hour, label, value}]
+      const sentiments = ["positive", "neutral", "negative", "mixed"];
+      // Get all unique hours sorted
+      const hours = Array.from(new Set(data.map(x => x.hour))).sort();
+      // Build dataset for each sentiment
+      const datasets = sentiments.map((sentiment, idx) => {
+        const colorArr = ["#4caf50", "#ffeb3b", "#f44336", "#90caf9"];
+        return {
+          label: sentiment.charAt(0).toUpperCase() + sentiment.slice(1),
+          data: hours.map(h => {
+            const found = data.find(x => x.hour === h && x.label === sentiment);
+            return found ? found.value : 0;
+          }),
+          borderColor: colorArr[idx],
+          backgroundColor: colorArr[idx],
+          fill: false,
+          tension: 0.2
+        };
+      });
+      sentimentTimeChart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: hours,
+          datasets: datasets
+        },
+        options: {
+          plugins: { legend: { display: true, position: "bottom" } },
+          scales: {
+            x: {
+              title: { display: true, text: "Hour" },
+              type: "time",
+              time: {
+                unit: "hour",
+                tooltipFormat: "yyyy-MM-dd HH:mm"
+              },
+              ticks: { autoSkip: true, maxTicksLimit: 12 }
+            },
+            y: { beginAtZero: true, title: { display: true, text: "Count" } }
+          }
+        }
+      });
+    }
+
+    async function fetchMetric(metric) {
+      try {
+        const res = await fetch(`${API_BASE}?metric=${metric}`);
+        if (!res.ok) throw new Error("API error");
+        return await res.json();
+      } catch (e) {
+        return [];
+      }
+    }
+
+    async function renderSentiment() {
+      const data = await fetchMetric("sentiment");
+      const ctx = document.getElementById("sentimentChart").getContext("2d");
+      if (sentimentChart) sentimentChart.destroy();
+      sentimentChart = new Chart(ctx, {
+        type: "pie",
+        data: {
+          labels: data.map(x => x.label),
+          datasets: [{
+            data: data.map(x => x.value),
+            backgroundColor: ["#4caf50", "#ffeb3b", "#f44336", "#90caf9", "#ce93d8"]
+          }]
+        },
+        options: {
+          plugins: { legend: { position: "bottom" } }
+        }
+      });
+    }
+
+    async function renderLanguages() {
+      const data = await fetchMetric("languages");
+      const ctx = document.getElementById("langChart").getContext("2d");
+      if (langChart) langChart.destroy();
+      langChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels: data.map(x => x.label),
+          datasets: [{
+            label: "Questions",
+            data: data.map(x => x.value),
+            backgroundColor: "#1976d2"
+          }]
+        },
+        options: {
+          indexAxis: "y",
+          plugins: { legend: { display: false } },
+          scales: { x: { beginAtZero: true } }
+        }
+      });
+    }
+
+    async function renderPhrases() {
+      const data = await fetchMetric("top_phrases");
+      const canvas = document.getElementById("phrasesCloud");
+      // Масив [ [word, weight], ... ]
+      const words = data.map(item => [item.label, item.value]);
+      // Wordcloud2.js рендерить прямо на canvas
+      WordCloud(canvas, {
+        list: words,
+        gridSize: 10,
+        weightFactor: function (size) { return Math.max(12, Math.sqrt(size) * 8); },
+        fontFamily: 'system-ui, Roboto, Arial, sans-serif',
+        color: '#1976d2',
+        backgroundColor: 'transparent',
+        rotateRatio: 0,
+        minSize: 10,
+        drawOutOfBound: false,
+        shuffle: true,
+        click: function(item) { /* можна додати дію по кліку */ },
+      });
+    }
   </script>
 </body>
 </html>

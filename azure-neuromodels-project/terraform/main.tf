@@ -1,3 +1,12 @@
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = ">= 3.70.0"
+    }
+  }
+}
+
 provider "azurerm" {
   features {}
 }
@@ -12,6 +21,13 @@ module "blob_storage" {
   storage_account_name  = "neuromodelsknowledge"
   resource_group_name   = var.resource_group_name
   location              = var.location
+}
+
+module "log_analytics" {
+  source                      = "./modules/log_analytics"
+  log_analytics_workspace_name = "neuromodels-dialog-metrics-eu" # нова унікальна назва
+  location                    = "northeurope" # новий регіон
+  resource_group_name         = azurerm_resource_group.main.name
 }
 
 module "function_app" {
@@ -32,7 +48,24 @@ module "function_app" {
     COSMOSDB_CONTAINER      = "dialog_events"
     TEXT_ANALYTICS_ENDPOINT = module.cognitive_services.endpoint
     TEXT_ANALYTICS_KEY      = module.cognitive_services.primary_key
+
+    # Azure Data Explorer (Kusto) connection for ingest (залишаємо для сумісності)
+    KUSTO_INGEST_URI        = var.kusto_ingest_uri
+    KUSTO_DB                = var.kusto_db
+    KUSTO_TABLE             = var.kusto_table
+    KUSTO_INGEST_CLIENT_ID     = var.kusto_ingest_client_id
+    KUSTO_INGEST_CLIENT_SECRET = var.kusto_ingest_client_secret
+    KUSTO_INGEST_TENANT_ID     = var.kusto_ingest_tenant_id
+
+    # Azure Data Explorer (Kusto) connection for QUERY API (для дешборду)
+    KUSTO_CLUSTER        = module.data_explorer.kusto_uri
+    KUSTO_DB             = module.data_explorer.kusto_database_name
+    KUSTO_CLIENT_ID      = var.kusto_query_client_id
+    KUSTO_CLIENT_SECRET  = var.kusto_query_client_secret
+    KUSTO_TENANT_ID      = var.kusto_query_tenant_id
   }
+  log_analytics_workspace_id        = module.log_analytics.log_analytics_workspace_id
+  log_analytics_workspace_shared_key = module.log_analytics.log_analytics_workspace_primary_shared_key
 }
 
 module "static_website" {

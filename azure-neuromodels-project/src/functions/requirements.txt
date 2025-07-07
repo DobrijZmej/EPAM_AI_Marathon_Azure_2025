@@ -1,6 +1,8 @@
 azure-functions
 requests
 openai
-azure-cosmos>=4.6.0
+azure-cosmos
 aiohttp>=3.8.0
 azure-ai-textanalytics
+azure-kusto-data
+azure-kusto-ingest

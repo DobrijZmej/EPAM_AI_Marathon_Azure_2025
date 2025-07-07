@@ -1,0 +1,48 @@
+/* Dashboard styles */
+.dashboard {
+  margin-top: 3rem;
+  width: 100%;
+  max-width: 1200px;
+  background: none;
+}
+.charts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  justify-content: center;
+}
+.chart-block {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px #0001;
+  padding: 1.5rem 2rem;
+  min-width: 320px;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+canvas {
+  max-width: 320px;
+  max-height: 320px;
+}
+ul#phrasesList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+}
+ul#phrasesList li {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #eee;
+  font-size: 1.1rem;
+  display: flex;
+  justify-content: space-between;
+}
+ul#phrasesList li:last-child {
+  border-bottom: none;
+}
+@media (max-width: 900px) {
+  .charts { flex-direction: column; align-items: center; }
+  .chart-block { width: 100%; max-width: 95vw; }
+}

@@ -150,7 +150,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
             "content": question,
             "meta": {
-                "lang": req_body.get("lang", "uk"),
                 "source": None,
                 "score": None,
                 "latency_ms": None
@@ -197,7 +196,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
                 "content": doc.get("content", ""),
                 "meta": {
-                    "lang": req_body.get("lang", "uk"),
                     "source": doc.get("source") or doc.get("metadata_storage_path"),
                     "score": doc.get("@search.score"),
                     "latency_ms": None
@@ -221,7 +219,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
             "content": user_answer,
             "meta": {
-                "lang": req_body.get("lang", "uk"),
                 "source": None,
                 "score": None,
                 "latency_ms": None
