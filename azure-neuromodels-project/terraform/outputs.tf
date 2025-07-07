@@ -16,3 +16,12 @@ output "cosmosdb_account_primary_key" {
   value     = module.cosmosdb_serverless.cosmosdb_account_primary_key
   sensitive = true
 }
+
+output "text_analytics_endpoint" {
+  value = module.cognitive_services.endpoint
+}
+
+output "text_analytics_key" {
+  value     = module.cognitive_services.primary_key
+  sensitive = true
+}

@@ -30,6 +30,8 @@ module "function_app" {
     COSMOSDB_KEY            = module.cosmosdb_serverless.cosmosdb_account_primary_key
     COSMOSDB_DATABASE       = "neuromodels-dialogs"
     COSMOSDB_CONTAINER      = "dialog_events"
+    TEXT_ANALYTICS_ENDPOINT = module.cognitive_services.endpoint
+    TEXT_ANALYTICS_KEY      = module.cognitive_services.primary_key
   }
 }
 
@@ -47,6 +49,14 @@ module "cosmosdb_serverless" {
   resource_group_name = azurerm_resource_group.main.name
   database_name       = "neuromodels-dialogs"
   container_name      = "dialog_events"
+}
+
+module "cognitive_services" {
+  source              = "./modules/cognitive_services"
+  account_name        = "neuromodels-cogsvc"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  tags                = {}
 }
 
 variable "search_api_key" {
