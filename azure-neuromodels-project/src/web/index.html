@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <title>AI Агент – Демонстрація</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: system-ui, Roboto, Arial, sans-serif;
+      background: #f4f6fa;
+      color: #222;
+    }
+    .container {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 1.5rem;
+    }
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      width: 100%;
+      max-width: 400px;
+      background: #fff;
+      padding: 2rem 1.5rem;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px #0001;
+    }
+    input, textarea, button {
+      font: inherit;
+      padding: 0.75rem;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      outline: none;
+      transition: border 0.2s;
+    }
+    input:focus, textarea:focus {
+      border-color: #1976d2;
+    }
+    button {
+      background: #1976d2;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+    button:disabled {
+      background: #b0b8c1;
+      cursor: not-allowed;
+    }
+    .answer {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: #e3f2fd;
+      border-radius: 8px;
+      min-height: 2rem;
+      width: 100%;
+      max-width: 400px;
+      word-break: break-word;
+      white-space: pre-line;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background: #181a1b; color: #eee; }
+      .container { background: none; }
+      form { background: #23272b; box-shadow: 0 2px 12px #0006; }
+      input, textarea { background: #23272b; color: #eee; border: 1px solid #444; }
+      .answer { background: #263238; color: #b3e5fc; }
+      button { background: #2196f3; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>AI Агент</h1>
+    <form id="ask-form">
+      <textarea id="question" rows="3" placeholder="Введіть ваше запитання..." required></textarea>
+      <button type="submit" id="send-btn">Надіслати</button>
+    </form>
+    <div class="answer" id="answer"></div>
+  </div>
+  <script>
+    // Генерація та збереження user_id
+    let userId = localStorage.getItem('user_id');
+    if (!userId) {
+      userId = crypto.randomUUID();
+      localStorage.setItem('user_id', userId);
+    }
+
+    const form = document.getElementById('ask-form');
+    const questionInput = document.getElementById('question');
+    const answerDiv = document.getElementById('answer');
+    const sendBtn = document.getElementById('send-btn');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const question = questionInput.value.trim();
+      if (!question) return;
+      sendBtn.disabled = true;
+      answerDiv.textContent = 'Зачекайте...';
+
+      try {
+        const res = await fetch('https://neuromodels-func.azurewebsites.net/api/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId, question })
+        });
+        if (!res.ok) throw new Error('Помилка API');
+        const data = await res.json();
+        answerDiv.textContent = data.answer || 'Відповідь відсутня.';
+      } catch (err) {
+        answerDiv.textContent = 'Сталася помилка. Спробуйте ще раз.';
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

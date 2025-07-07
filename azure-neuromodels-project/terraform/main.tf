@@ -26,7 +26,27 @@ module "function_app" {
     SEARCH_API_KEY          = var.search_api_key
     SEARCH_INDEX_NAME       = "knowledge-index"
     OPENAI_API_KEY          = var.openai_api_key
+    COSMOSDB_ENDPOINT       = module.cosmosdb_serverless.cosmosdb_account_endpoint
+    COSMOSDB_KEY            = module.cosmosdb_serverless.cosmosdb_account_primary_key
+    COSMOSDB_DATABASE       = "neuromodels-dialogs"
+    COSMOSDB_CONTAINER      = "dialog_events"
   }
+}
+
+module "static_website" {
+  source                = "./modules/static_website"
+  storage_account_name  = "neuromodelswebdemo"
+  resource_group_name   = azurerm_resource_group.main.name
+  location              = azurerm_resource_group.main.location
+}
+
+module "cosmosdb_serverless" {
+  source              = "./modules/cosmosdb_serverless"
+  account_name        = "neuromodels-cosmosdb"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  database_name       = "neuromodels-dialogs"
+  container_name      = "dialog_events"
 }
 
 variable "search_api_key" {

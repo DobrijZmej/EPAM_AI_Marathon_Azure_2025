@@ -34,6 +34,12 @@ resource "azurerm_linux_function_app" "this" {
     application_stack {
       python_version = "3.11"
     }
+    cors {
+      allowed_origins = [
+        "https://neuromodelswebdemo.z6.web.core.windows.net"
+      ]
+      support_credentials = false
+    }
   }
   app_settings = merge({
     "FUNCTIONS_WORKER_RUNTIME" = "python"
